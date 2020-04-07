@@ -1,1 +1,1 @@
-# lightgbm_aml
+# Running LightGBM in parallel on Azure
