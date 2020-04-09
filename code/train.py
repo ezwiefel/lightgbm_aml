@@ -11,15 +11,9 @@ import logging
 from threading import Event, Thread
 import shutil
 
-from aml_logging_wrapper import AmlLogPipe
+from aml_lgbm import AmlLogPipe, LightGBMRunner
 
 from azureml.core import Run
-
-TASK_CHOICES = click.Choice(['train', 'predict', 'convert_model', 'refit'])
-OBJECTIVE_CHOICES = click.Choice(['regression', 'regression_l1', 'huber', 'fair', 'poisson', 'quantile', 'mape', 'gamma',
-                                  'tweedie', 'binary', 'multiclass', 'multiclassova', 'cross_entropy', 'cross_entropy_lambda', 'lambdarank', 'rank_xendcg'])
-BOOSTING_CHOICE = click.Choice(['gbdt', 'rf', 'dart', 'goss'])
-TREE_LEARNER = click.Choice(['serial', 'feature', 'data', 'voting'])
 
 # Determine the MPI_RANK and MPI_MODE
 # OMPI_COMM_WORLD_RANK environment variable is set by OpenMPI in parallel context.
@@ -54,15 +48,17 @@ def main(context, train_data, valid_data, conf_file, **kwargs):
     # Parse the unknown and extra known arguments into a single list
     lgbm_params = {**kwargs, **parse_unknown_args(context.args)}
 
-    lgbm_params['machines'] = create_machine_list(kwargs['local_listen_port'])
+    if MPI_MODE:
+        lgbm_params['machines'] = create_machine_list(kwargs['local_listen_port'])
 
-    command_line = prepare_lgbm_command_line(conf_file=conf_file, train_data=train_data,
-                                             validation_data=valid_data, param_dict=lgbm_params)
+    lgbm_runner = LightGBMRunner(config_file=conf_file, train_data=train_data,
+                                 validation_data=valid_data, parameters=lgbm_params, run_context=run)
 
-    run_lgbm(command_line)
+    lgbm_runner.run()
 
     if MPI_RANK == 0:
-        capture_model_file(filename=lgbm_params['output_model'])
+        os.makedirs('outputs', exist_ok=True)
+        shutil.copy(lgbm_runner.model_file, os.path.join('./outputs', lgbm_runner.model_file))
 
 
 def create_machine_list(port: int) -> str:
@@ -89,7 +85,8 @@ def parse_unknown_args(arg_list: list) -> dict:
     for arg in pairwise(arg_list):
         if arg[0].startswith('--'):
             if arg[1].startswith('--'):
-                raise ValueError(f"The arguments passed must be in --arg value format. Argument '{arg[0]}' appears to have no associate value.")
+                raise ValueError(
+                    f"The arguments passed must be in --arg value format. Argument '{arg[0]}' appears to have no associate value.")
             param_dict[arg[0].strip('--')] = arg[1]
 
     return param_dict
@@ -104,69 +101,6 @@ def pairwise(iterable) -> zip:
     a, b = tee(iterable)
     next(b, None)
     return zip(a, b)
-
-
-def expand_path(path: str) -> str:
-    """Take a path and return a list of files if a directory, otherwise return the path. LightGBM expects a list of files in a comma seperated string."""
-    # Check if it is a directory, if so return all files in the directory
-    if os.path.isdir(path):
-        files = [entry.path for entry in os.scandir(path) if entry.is_file()]
-        return ','.join(files)
-    # Otherwise return the file name
-    else:
-        return path
-
-
-def dict_to_param_list(params_dict: dict) -> list:
-    """Take a dict object and convert to a string of key=value seperated by spaces"""
-    param_list = []
-    for key, value in params_dict.items():
-        # Add the parameter to the string if it is not None
-        if value:
-            param_list.append(f'{key}={value}')
-
-    return param_list
-
-
-def prepare_lgbm_command_line(conf_file: str = None,
-                              train_data: str = None,
-                              validation_data: str = None,
-                              param_dict: dict = None) -> list:
-    """Prepare the string that will be passed to the shell to start the LGBM run"""
-    command_list = ['/usr/local/bin/lightgbm']
-
-    if conf_file:
-        command_list.append(f'config={conf_file}')
-    if train_data:
-        command_list.append(f'data={expand_path(train_data)}')
-    if validation_data:
-        command_list.append(
-            f'valid={expand_path(validation_data)}')
-    if param_dict:
-        command_list += dict_to_param_list(param_dict)
-        # if len(param_list) != 0:
-        #     command_list += param_list
-
-    return command_list
-
-
-def run_lgbm(command_line: str):
-    logpipe = AmlLogPipe(logging.INFO, Run.get_context())
-    with subprocess.Popen(command_line, stdout=logpipe, stderr=logpipe) as s:
-        logpipe.close()
-
-    if s.returncode != 0:
-        raise RuntimeError(f'Lightgbm exited with exit code: {s.returncode}')
-
-
-def capture_model_file(filename: str = "LightGBM_model.txt"):
-    """LightGBM will save the model as a text file in the current directory. 
-       By default the name is 'LightGBM_model.txt' 
-
-       This function moves the file to the outputs folder to be captured by AML
-    """
-    os.makedirs('outputs', exist_ok=True)
-    shutil.copy(filename, os.path.join('./outputs', filename))
 
 
 if __name__ == "__main__":
