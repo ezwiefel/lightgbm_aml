@@ -31,7 +31,7 @@ class LightGBMRunner(object):
 
         if s.returncode != 0:
             raise RuntimeError(
-                f'Lightgbm exited with exit code: {s.returncode}')
+                f'LightGBM exited with exit code: {s.returncode}')
 
     @property
     def command_line(self):
