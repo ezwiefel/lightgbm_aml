@@ -11,7 +11,7 @@ import logging
 from threading import Event, Thread
 import shutil
 
-from aml_lgbm import AmlLogPipe, LightGBMRunner
+from aml_lgbm import LightGBMRunner
 
 from azureml.core import Run
 
@@ -20,10 +20,11 @@ from azureml.core import Run
 MPI_RANK = int(os.environ.get('OMPI_COMM_WORLD_RANK', 0))
 MPI_MODE = True if os.environ.get('OMPI_COMM_WORLD_RANK') else False
 if MPI_MODE:
+    print()
     print('OpenMPI cluster run detected:')
     print(f"    MPI Rank: {MPI_RANK}")
     print(f"    MPI World Size: {os.environ.get('OMPI_COMM_WORLD_SIZE')}")
-
+    print()
 
 # Instantiate the run object from AzureML. We'll use this for logging, etc.
 run = Run.get_context()
@@ -53,7 +54,9 @@ def main(context, train_data, valid_data, conf_file, **kwargs):
 
     lgbm_runner = LightGBMRunner(config_file=conf_file, train_data=train_data,
                                  validation_data=valid_data, parameters=lgbm_params, run_context=run)
-
+    
+    print(f"Running command: '{' '.join(lgbm_runner.command_line)}'")
+    print()
     lgbm_runner.run()
 
     if MPI_RANK == 0:
